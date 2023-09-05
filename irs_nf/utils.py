@@ -5,7 +5,7 @@ import re
 logger = logging.getLogger("aeri_logger")
 
 def findfile(path,pattern,verbose=2):
-    logger.debug('      Searching for files matching '+path+'/'+pattern)
+    logger.debug('Searching for files matching '+path+'/'+pattern)
 
     # We want to preserve periods (dots) in the pattern,
     # as many of our file patterns have periods in the name

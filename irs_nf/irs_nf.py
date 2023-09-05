@@ -9,6 +9,10 @@ import numpy as np
 from netCDF4 import Dataset
 from scipy.linalg import svd
 
+import matplotlib.pyplot as plt
+
+logger = logging.getLogger("irs_logger")
+
 
 def pca_expand(coef, PC):
 
@@ -124,46 +128,27 @@ def pca_project(x, ntr, pc):
     return coef
 
 
-def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=False, apply_only=False,
-                      pcs_filename=None, use_median_noise=False):
+def create_irs_noise_filter(files, sdir, sfields, pcs_filename=None, 
+                            use_median_noise=False, sky_view_angle=None):
     """
     Abstract:
-        This script is designed to noise filter the AERI observations
-        and place the noise-filtered data into the same netCDF file.  It uses
-        a Principal Component Analysis technique published in Turner et al.
-        JTECH 2006.  It is designed to use either ARM-formatted or dmv-ncdf
-        formatted AERI data.  It can perform dependent-PCA filtering or
-        independent-PCA filtering.
+        This function is designed to create the PCA the noise filter from IRS obvservations.  
+        It uses a Principal Component Analysis technique published in Turner et al.
+        JTECH 2006.  It is designed to use either ARM-formatted AERI, dmv-ncdf
+        formatted AERI, or ASSIST data. 
 
-    Author: Dave Turner, NSSL/NOAA
-    Ported to Python by Tyler Bell in Sept 2020 (CIWRO/NSSL)
-
-    Comments:
-        * To perform dependent PCA filtering, do not set "create_pcs_only" or "apply_only"
-        * To perform independent PCA filtering, the code must:
-            - be run once to generate the PCs, using "create_pcs_only" with
-                "pcs_filename" set to something
-            - be run afterwards, using "apply_only" with "pcs_filename" pointing
-                to a valid file with PCs in it
+    Author: Tyler Bell (CIWRO/NSSL, 2023) 2023
+        Based on code from Dave Turner
+        
+    Reference:
+        Turner, D. D., R. O. Knuteson, H. E. Revercomb, C. Lo, and R. G. Dedecker, 2006:
+        Noise Reduction of Atmospheric Emitted Radiance Interferometer (AERI) Observations Using
+        Principal Component Analysis. J. Atmos. Oceanic Technol., 23, 1223–1238,
+        https://doi.org/10.1175/JTECH1906.1.
 
     """
-
-    logger = logging.getLogger("irs_logger")
-
-    if create_pcs_only and pcs_filename is None:
-        logger.critical("If you want to only perform the decomposition, then you must provide a name for the variable"
-                      "'pcs_filename'")
-        logger.critical("Aborting")
-        return
-
-    os.chdir(idir)
     
-    logger.debug("Copying files to temporary directory...")
-    for fn in files:
-        copy2(fn, tdir)
-
     # Read in the radiance data
-    os.chdir(tdir)
     for i, fn in enumerate(sorted(files)):
         logger.debug(f'Loading {fn}')
 
@@ -182,9 +167,30 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
         wnum = wnum[foo]
         rad = rad[:, foo]
         bt = nc['base_time'][0]
-        to = nc['time_offset'][:]
-        qcflag = nc['missingDataFlag'][:]
+        mirror = nc['sceneMirrorAngle'][:]
+
+        try:
+            to = nc['time_offset'][:]
+        except IndexError:  # ASSISTs are different...
+            bt *= 1e-3
+            to = nc['time'][:]
+
+        try:
+            qcflag = nc['missingDataFlag'][:]
+        except IndexError:  # ASSIST doesn't have this... TODO - Add hatch closed filter instead and stuff from Issue #2
+            qcflag = np.zeros_like(to)
+        
         nc.close()
+
+        if sky_view_angle is not None:
+            if((sky_view_angle < 3) | (sky_view_angle > 357)):
+                bar = np.where((mirror < 3) | (mirror > 357))[0]
+            else:
+                bar = np.where((sky_view_angle-3 < mirror) & (mirror < sky_view_angle+3))[0]
+
+            to = to[bar]
+            rad = rad[bar]
+            qcflag = qcflag[bar]
 
         if i == 0:
             xsecs = bt+to
@@ -198,20 +204,36 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
     secs = xsecs
     rad = np.squeeze(np.transpose(xrad))
     qcflag = xqcflag
-
     # Now read in the summary files
     times = np.array([datetime.utcfromtimestamp(d) for d in xsecs])
     yyyymmdd = [d.strftime("%Y%m%d") for d in times]
 
     for ymd in np.unique(yyyymmdd):
-        sfiles = glob(os.path.join(sdir, f'*summary*{ymd}*.cdf'))
+        sfiles = glob(os.path.join(sdir, f'*sum*{ymd}*.cdf'))
         for j, sfile in enumerate(sorted(sfiles)):
             nc = Dataset(sfile)
             nwnum = nc[sfields[0]][:]
             nrad = nc[sfields[1]][:]
+            mirror = nc['sceneMirrorAngle'][:]
             bt = nc['base_time'][0]
-            to = nc['time_offset'][:]
+            
+            try:
+                to = nc['time_offset'][:]
+            except IndexError:  # ASSISTs are different...
+                bt *= 1e-3
+                to = nc['time'][:]
+            
             nc.close()
+
+            if sky_view_angle is not None:
+                if((sky_view_angle < 3) | (sky_view_angle > 357)):
+                    bar = np.where((mirror < 3) | (mirror > 357))[0]
+                else:
+                    bar = np.where((sky_view_angle-3 < mirror) & (mirror < sky_view_angle+3))[0]
+
+                to = to[bar]
+                nrad = nrad[bar]
+
             if j == 0:
                 xsecs = bt + to
                 xnrad = nrad.T
@@ -227,6 +249,7 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
         ni = len(secs) - len(nsecs)
         logger.debug(f"Adding summary samples: {ni}")
         nrad = np.append(nrad, np.array([nrad[-1, :] for k in range(ni)]), axis=0)
+
     elif len(nsecs) > len(secs):
         foo = np.where(nsecs <= max(secs)+1)
         if len(foo[0]) != len(secs):
@@ -258,16 +281,13 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
         return
 
     good = np.where((minv <= rad[:, foo[0][0]]) & (rad[:, foo[0][0]] < maxv) & (oqc == 0))
-    logger.debug(f"There are {len(good[0])} samples out of {len(secs)}")
+    logger.debug(f"There are {len(good[0])} good samples out of {len(secs)}")
 
     # If the number of good spectra is too small, then we should abort
-    if len(good[0]) <= 3*len(wnum) and not apply_only:
+    if len(good[0]) <= 3*len(wnum):
         logger.critical("There are TOO FEW good spectra for a good PCA noise filter (need > 3x at least")
         logger.critical("Aborting")
-        os.chdir(tdir)
-        for fn in files:
-            os.remove(fn)
-        # return
+        return
 
     # If the keyword is set, use the median noise spectrum instead of the real noise spectrum
     if use_median_noise:
@@ -279,57 +299,238 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
     for i in range(len(secs)):
         rad[i, :] = rad[i, :] / np.interp(wnum, nwnum, nrad[i, :])
 
-    # IF we are performing an independent PCA noise filter, then we need
-    # to skip this step of generating the PCs from this dataset
-    if not apply_only:
+    # Generate the PCs
+    pcwnum = wnum.copy()
 
-        # Generate the PCs
-        pcwnum = wnum.copy()
+    # Compute mean spectrum
+    m = np.mean(rad[good], axis=0)
 
-        # Compute mean spectrum
-        m = np.mean(rad[good], axis=0)
+    c = np.cov(rad[good].T)
 
-        c = np.cov(rad[good].T)
+    logger.debug("Computing the SVD")
+    u, d, v = svd(c)
+    PC = {'u': u, 'd': d, 'm': m}
 
-        logger.debug("Computing the SVD")
-        u, d, v = svd(c)
-        PC = {'u': u, 'd': d, 'm': m}
+    # Determine the number of eigenvectors to use
+    nvecs = pca_ind(d, len(good), doplot=False)
+    logger.info(f"Number of e-vecs used in reconstruction: {nvecs}")
+    pca_comment = f"{len(d)} total PCs, {nvecs} considered significant, derived from {len(good)} " \
+                    f"time samples, computed on {datetime.utcnow().isoformat()}"
 
-        # Determine the number of eigenvectors to use
-        nvecs = pca_ind(d, len(good), doplot=False)
-        logger.info(f"Number of e-vecs used in reconstruction: {nvecs}")
-        pca_comment = f"{len(d)} total PCs, {nvecs} considered significant, derived from {len(good)} " \
-                      f"time samples, computed on {datetime.utcnow().isoformat()}"
+    gsecs = secs[good]
+    data = {'gsecs': gsecs, 'nvecs': nvecs, 'pcwnum': pcwnum, 'pca_comment': pca_comment,
+            'PC': PC}
+    with open(pcs_filename, 'wb') as fh:
+        pickle.dump(data, fh)
 
-        if create_pcs_only:
-            gsecs = secs[good]
-            data = {'gsecs': gsecs, 'nvecs': nvecs, 'pcwnum': pcwnum, 'pca_comment': pca_comment,
-                    'PC': PC}
-            with open(pcs_filename, 'wb') as fh:
-                pickle.dump(data, fh)
+    logger.info("DONE creating the PCs and storing them. The NF was not applied yet")
 
-            logger.info("DONE creating the PCs and storing them. The NF was not applied yet")
+    return
 
-            # Delete the tmp files since I'm not applying the filter
-            os.chdir(tdir)
-            for f in files:
-                os.remove(f)
 
+def apply_irs_noise_filter(files, sdir, sfields, tdir, odir, pcs_filename=None, use_median_noise=False):
+    """
+    Abstract:
+        This function is designed to apply the noise filter to IRS observations
+        and place the noise-filtered data into the same netCDF file.  It uses
+        a Principal Component Analysis technique published in Turner et al.
+        JTECH 2006.  It is designed to use either ARM-formatted AERI, dmv-ncdf
+        formatted AERI, or ASSIST data.  
+
+    Author: Tyler Bell (CIWRO/NSSL, 2023) 2023
+        Based on code from Dave Turner
+
+    """
+    
+    logger.debug("Copying files to temporary directory...")
+    new_files = []
+    for fn in files:
+        copy2(fn, tdir)
+        new_files.append(os.path.join(tdir, os.path.basename(fn)))
+    
+    # Read in the radiance data
+    os.chdir(tdir)
+    files = new_files
+    for i, fn in enumerate(sorted(files)):
+        logger.debug(f'Loading {fn}')
+
+        nc = Dataset(fn)
+
+        if 'wnum' in nc.variables.keys():
+            wnum = nc['wnum'][:]
+        elif 'wnum1' in nc.variables.keys():
+            wnum = nc['wnum1'][:]
+        else:
+            logger.error(" Unable to find either wavenumber field in the data - aborting")
+            logger.error(" Unable to find either wavenumber field in the data - aborting")
             return
 
+        rad = nc['mean_rad'][:]
+        foo = np.where(wnum < 3000)
+        wnum = wnum[foo]
+        rad = rad[:, foo]
+        bt = nc['base_time'][0]
+        mirror = nc['sceneMirrorAngle'][:]
+
+        try:
+            to = nc['time_offset'][:]
+        except IndexError:  # ASSISTs are different...
+            bt *= 1e-3
+            to = nc['time'][:]
+
+        try:
+            qcflag = nc['missingDataFlag'][:]
+        except IndexError:  # ASSIST doesn't have this... TODO - Add hatch closed filter instead and stuff from Issue #2
+            qcflag = np.zeros_like(to)
+        
+        nc.close()
+
+        # NOTE: I am not removing the blackbody views from ASSIST data when applying the filter
+        '''
+        if sky_view_angle is not None:
+            if((sky_view_angle < 3) | (sky_view_angle > 357)):
+                bar = np.where((mirror < 3) | (mirror > 357))[0]
+            else:
+                bar = np.where((sky_view_angle-3 < mirror) & (mirror < sky_view_angle+3))[0]
+
+            to = to[bar]
+            rad = rad[bar]
+            qcflag = qcflag[bar]
+        '''
+
+        if i == 0:
+            xsecs = bt+to
+            xrad = np.squeeze(rad.T)
+            xqcflag = qcflag
+        else:
+            xsecs = np.append(xsecs, bt+to)
+            xrad = np.append(xrad, np.squeeze(rad.T), axis=1)
+            xqcflag = np.append(xqcflag, qcflag)
+
+    secs = xsecs
+    rad = np.squeeze(np.transpose(xrad))
+    qcflag = xqcflag
+    # Now read in the summary files
+    times = np.array([datetime.utcfromtimestamp(d) for d in xsecs])
+    yyyymmdd = [d.strftime("%Y%m%d") for d in times]
+
+    for ymd in np.unique(yyyymmdd):
+        sfiles = glob(os.path.join(sdir, f'*sum*{ymd}*.cdf'))
+        for j, sfile in enumerate(sorted(sfiles)):
+            nc = Dataset(sfile)
+            nwnum = nc[sfields[0]][:]
+            nrad = nc[sfields[1]][:]
+            mirror = nc['sceneMirrorAngle'][:]
+            bt = nc['base_time'][0]
+            
+            try:
+                to = nc['time_offset'][:]
+            except IndexError:  # ASSISTs are different...
+                bt *= 1e-3
+                to = nc['time'][:]
+            
+            nc.close()
+            
+            # NOTE: I am not removing the blackbody views from ASSIST data when applying the filter
+            '''
+            if sky_view_angle is not None:
+                if((sky_view_angle < 3) | (sky_view_angle > 357)):
+                    bar = np.where((mirror < 3) | (mirror > 357))[0]
+                else:
+                    bar = np.where((sky_view_angle-3 < mirror) & (mirror < sky_view_angle+3))[0]
+
+                to = to[bar]
+                nrad = nrad[bar]
+            '''
+
+            if j == 0:
+                xsecs = bt + to
+                xnrad = nrad.T
+            else:
+                xsecs = np.append(xsecs, bt + to)
+                xnrad = np.append(xnrad, nrad.T)
+
+    nsecs = xsecs
+    nrad = np.transpose(xnrad)
+
+    # Quick check for consistency
+    if len(nsecs) < len(secs):
+        ni = len(secs) - len(nsecs)
+        logger.debug(f"Adding summary samples: {ni}")
+        nrad = np.append(nrad, np.array([nrad[-1, :] for k in range(ni)]), axis=0)
+
+    elif len(nsecs) > len(secs):
+        foo = np.where(nsecs <= max(secs)+1)
+        if len(foo[0]) != len(secs):
+            logger.error("Problem with time matching")
+            return
+        nsecs = nsecs[foo]
+        nrad = nrad[foo, :]
+
+    osecs = secs
+    orad = rad.transpose()
+    onrad = nrad.transpose()
+    oqc = qcflag
+
+    logger.info(f"Number of samples: {len(secs)}; Number of spectral channels: {len(wnum)}")
+
+    # Select only the good data (simple check)
+    if min(wnum) < 600:
+        logger.debug("I believe I'm working with ch1 data")
+        foo = np.where(wnum >= 900)
+        minv = -2
+        maxv = 105
+    elif max(wnum) > 2800:
+        logger.debug("I believe I'm working with ch2 data")
+        foo = np.where(wnum >= 2550)
+        minv = -0.2
+        maxv = 2.0
     else:
-        logger.info("Restoring PCs from a file (independent PCA noise filtering)")
+        logger.error("Unable to determine the channel...")
+        return
 
-        with open(pcs_filename, 'rb') as fh:
-            data = pickle.load(fh)
+    good = np.where((minv <= rad[:, foo[0][0]]) & (rad[:, foo[0][0]] < maxv) & (oqc == 0))
+    logger.debug(f"There are {len(good[0])} good samples out of {len(secs)}")
 
-        gsecs = data['gsecs']
-        nvecs = data['nvecs']
-        pcwnum = data['pcwnum']
-        pca_comment = data['pca_comment']
-        PC = data['PC']
+    # If the number of good spectra is too small, then we should abort
+    if len(good[0]) <= 3*len(wnum):
+        logger.critical("There are TOO FEW good spectra for a good PCA noise filter (need > 3x at least")
+        logger.critical("Aborting")
+        os.chdir(tdir)
+        for fn in files:
+            os.remove(os.path.basename(fn))
+        return
 
-        logger.debug(f"Number of e-vecs used in reconstruction: {nvecs}")
+    # If the keyword is set, use the median noise spectrum instead of the real noise spectrum
+    if use_median_noise:
+        logger.info("Using the median noise specturm, not the true sample noise spectrum")
+        for i in range(nwnum):
+            nrad[:, i] = np.median(nrad[:, i])
+
+    # Normalize the data
+    for i in range(len(secs)):
+        rad[i, :] = rad[i, :] / np.interp(wnum, nwnum, nrad[i, :])
+
+    # Make sure the pickle file exists
+    if not os.path.exists(pcs_filename):
+        logger.error(f"The PCS file {pcs_filename} does not exist!")
+        os.chdir(tdir)
+        for fn in files:
+            os.remove(os.path.basename(fn))
+        return
+
+    # Open the pickle file and load the information 
+    logger.info("Restoring PCs from a file (independent PCA noise filtering)")
+    with open(pcs_filename, 'rb') as fh:
+        data = pickle.load(fh)
+
+    gsecs = data['gsecs']
+    nvecs = data['nvecs']
+    pcwnum = data['pcwnum']
+    pca_comment = data['pca_comment']
+    PC = data['PC']
+
+    logger.debug(f"Number of e-vecs used in reconstruction: {nvecs}")
 
     # Confirm the wavenumber array here matches that used to generate the PCs
     delta = np.abs(wnum - pcwnum)
@@ -353,16 +554,20 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
     for i in range(len(secs)):
         frad[i, :] = frad[i, :] * np.interp(wnum, nwnum, nrad[i, :])
 
-    # Now place the noiise-filtered data back into the netCDF files, and copy them to the output directory
+    # Now place the noise-filtered data back into the netCDF files, and copy them to the output directory
     os.chdir(tdir)
     for fn in files:
-        logger.info(f"Storing the fiiltered data in {fn}")
         nc = Dataset(fn, 'a')
         rad = nc['mean_rad'][:]
         bt = nc['base_time'][0]
-        to = nc['time_offset'][:]
+        
+        if 'time_offset' in nc.variables.keys():
+            to = nc['time_offset'][:]   
+        elif 'time' in nc.variables.keys():
+            bt *= 1e-3
+            to = nc['time'][:]
+        
         fsecs = bt+to
-
         kk = len(frad[0, :])
 
         for j, fsec in enumerate(fsecs):
@@ -380,14 +585,8 @@ def irs_noise_filter(idir, sdir, sfields, tdir, odir, files, create_pcs_only=Fal
         nc.setncattr('Noise_filter_comment2', pca_comment)
         nc.close()
 
-        move(os.path.join(tdir, fn), os.path.join(odir, fn))
-
-
-
-
-
-
-
+        logger.debug(f"Final data in {os.path.join(odir, os.path.basename(fn))}")
+        move(fn, os.path.join(odir, os.path.basename(fn)))
 
 
 

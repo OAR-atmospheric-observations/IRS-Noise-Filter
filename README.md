@@ -22,30 +22,36 @@ The `run_irs_nf.py` script should be able to meet most user needs for filtering,
 
 ```
 $ python run_irs_nf.py --help
-usage: run_irs_nf.py [-h] [--pcs PCS] [--create] [--apply] [--tdir TDIR] [--verbose] start_date end_date idir sdir odir
+usage: run_irs_nf.py [-h] [--create] [--apply] [--tdir TDIR] [--verbose] start_date end_date idir sdir odir {dmv2cdf,assist,arm}
 
 positional arguments:
-  start_date   Start date (YYYYmmdd)
-  end_date     End date (YYYmmdd)
-  idir         Directory with CH1 or CH2 data
-  sdir         Directory with summary files
-  odir         Output directory for the noise filtered files and the PCA file
+  start_date            Start date (YYYYmmdd)
+  end_date              End date (YYYmmdd)
+  idir                  Directory with CH1 or CH2 data
+  sdir                  Directory with summary files
+  odir                  Output directory for the noise filtered files and the PCA file
+  {dmv2cdf,assist,arm}  Type of output files
 
 optional arguments:
-  -h, --help   show this help message and exit
-  --pcs PCS    PCS file name
-  --create     Flag to create a new PCA file
-  --apply      Flag to apply the noise filter to the data
-  --tdir TDIR  Temporary directory. If blank, one is created automatically
-  --verbose    Verbose flag for debugging
+  -h, --help            show this help message and exit
+  --create              Flag to create a new PCA file
+  --apply               Flag to apply the noise filter to the data
+  --tdir TDIR           Temporary directory. If blank, one is created automatically
+  --verbose             Verbose flag for debugging
 ```
 
-Note that one or both of the `--create` and `--apply` flags need to be specified or the program will do nothing. The `--create` flag will result in a Python pickle file being written to the output directory (`odir`). The `--apply` flag will apply the filter to the data. 
+Note that one or both of the `--create` and `--apply` flags need to be specified or the program will do nothing. The `--create` flag will result in a Python pickle file being written to the output directory (`odir`). The `--apply` flag will apply the filter to the data. This allows the user to choose whether or not to perform independent or dependent noise filtering 
 
 
 ## Docker/Podman
 
-Coming soon!
+This code is also packaged into a Docker image that can be pulled from [GitHub Packages](https://github.com/OAR-atmospheric-observations/IRS-Noise-Filter/pkgs/container/irs-noise-filter).
+
+To run this you'll need to map the data location to the Docker container with the `-v` option in the run command. An example is shown below:
+
+```
+docker run --rm -v /Path/to/data/on/local/machine/:/data/ ghcr.io/oar-atmospheric-observations/irs-noise-filter:latest python run_irs_nf.py 20230820 20230830 /data/aeri /data/aeri /data/aeri_nf dmv2cdf --apply --create --verbose
+```
 
 ### References
 
