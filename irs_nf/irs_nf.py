@@ -492,15 +492,6 @@ def apply_irs_noise_filter(files, sdir, sfields, tdir, odir, pcs_filename=None, 
     good = np.where((minv <= rad[:, foo[0][0]]) & (rad[:, foo[0][0]] < maxv) & (oqc == 0))
     logger.debug(f"There are {len(good[0])} good samples out of {len(secs)}")
 
-    # If the number of good spectra is too small, then we should abort
-    if len(good[0]) <= 3*len(wnum):
-        logger.critical("There are TOO FEW good spectra for a good PCA noise filter (need > 3x at least")
-        logger.critical("Aborting")
-        os.chdir(tdir)
-        for fn in files:
-            os.remove(os.path.basename(fn))
-        return
-
     # If the keyword is set, use the median noise spectrum instead of the real noise spectrum
     if use_median_noise:
         logger.info("Using the median noise specturm, not the true sample noise spectrum")
