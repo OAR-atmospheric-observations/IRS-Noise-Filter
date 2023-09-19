@@ -90,7 +90,7 @@ rfilenames = np.array(files)[foo]
 
 logger.info(f"Number of Ch1 files: {len(rfilenames)}")
 
-if len(rfilenames) > 1:
+if len(rfilenames) >= 1:
 
     pcs_filename = os.path.join(odir, 'irs_nf_ch1.pkl')
     
@@ -116,7 +116,7 @@ rfilenames = np.array(files)[foo]
 
 logger.info(f"Number of Ch2 files: {len(rfilenames)}")
 
-if len(rfilenames) > 1:
+if len(rfilenames) >= 1:
 
     pcs_filename = os.path.join(odir, 'irs_nf_ch2.pkl')
     
