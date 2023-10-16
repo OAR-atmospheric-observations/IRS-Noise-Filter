@@ -53,6 +53,10 @@ To run this you'll need to map the data location to the Docker container with th
 docker run --rm -v /Path/to/data/on/local/machine/:/data/ ghcr.io/oar-atmospheric-observations/irs-noise-filter:latest python run_irs_nf.py 20230820 20230830 /data/aeri /data/aeri /data/aeri_nf dmv2cdf --apply --create --verbose
 ```
 
+### Disclamer
+
+This repository is a scientific product and is not official communication of the National Oceanic and Atmospheric Administration (NOAA), or the United States Department of Commerce. All NOAA GitHub project code is provided on an ‘as is’ basis, with no warranty, and the user assumes responsibility for its use. NOAA has relinquished control of the information and no longer has responsibility to protect the integrity, confidentiality, or availability of the information. Any claims against the Department of Commerce or NOAA stemming from the use of this GitHub project will be governed by all applicable Federal law. Any reference to specific commercial products, processes, or services by service mark, trademark, manufacturer, or otherwise, does not constitute or imply their endorsement, recommendation or favoring by the Department of Commerce. The Department of Commerce seal and logo, or the seal and logo of a DOC bureau, shall not be used in any manner to imply endorsement of any commercial product or activity by DOC or the United States Government.
+
 ### References
 
 Turner, D. D., R. O. Knuteson, H. E. Revercomb, C. Lo, and R. G. Dedecker, 2006:
